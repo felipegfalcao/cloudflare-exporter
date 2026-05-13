@@ -1239,11 +1239,11 @@ func fetchZoneASNAnalytics(zones []cfzones.Zone, wg *sync.WaitGroup) {
 }
 
 func addASNGroups(z *zoneRespASN, name string, account string) {
-	if len(z.HttpRequestsASNGroups) == 0 {
+	if len(z.HTTPRequestsASNGroups) == 0 {
 		return
 	}
 
-	for _, g := range z.HttpRequestsASNGroups {
+	for _, g := range z.HTTPRequestsASNGroups {
 		asn := g.Dimensions.ClientASN
 		asnDesc := g.Dimensions.ClientASNDescription
 		if asnDesc == "" {
