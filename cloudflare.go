@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"strings"
+	"time"
 
 	cf "github.com/cloudflare/cloudflare-go/v4"
 	cfaccounts "github.com/cloudflare/cloudflare-go/v4/accounts"
@@ -30,6 +31,20 @@ type cloudflareResponseAccts struct {
 	Viewer struct {
 		Accounts []accountResp `json:"accounts"`
 	} `json:"viewer"`
+}
+
+type cloudflareResponseAccountHTTPDataTransfer struct {
+	Viewer struct {
+		Accounts []accountHTTPDataTransferResp `json:"accounts"`
+	} `json:"viewer"`
+}
+
+type accountHTTPDataTransferResp struct {
+	HTTPRequestsAdaptiveGroups []struct {
+		Sum struct {
+			EdgeResponseBytes uint64 `json:"edgeResponseBytes"`
+		} `json:"sum"`
+	} `json:"httpRequestsAdaptiveGroups"`
 }
 
 type cloudflareResponseColo struct {
@@ -110,7 +125,6 @@ type zoneRespASN struct {
 		} `json:"avg"`
 	} `json:"httpRequestsAdaptiveGroups"`
 }
-
 
 type cloudflareResponseEdgeErrorsByPath struct {
 	Viewer struct {
@@ -767,6 +781,48 @@ func fetchWorkerTotals(accountID string) (*cloudflareResponseAccts, error) {
 	var resp cloudflareResponseAccts
 	if err := gql.Client.Run(ctx, request, &resp); err != nil {
 		log.Errorf("error fetching worker totals, err:%v", err)
+		return nil, err
+	}
+
+	return &resp, nil
+}
+
+func fetchAccountHTTPDataTransfer(accountID string, from time.Time, to time.Time, requestSource string) (*cloudflareResponseAccountHTTPDataTransfer, error) {
+	request := graphql.NewRequest(`
+query ($accountID: String!, $mintime: Time!, $maxtime: Time!, $requestSource: String!) {
+	viewer {
+		accounts(filter: {accountTag: $accountID}) {
+			httpRequestsAdaptiveGroups(
+				limit: 1
+				filter: {
+					datetime_geq: $mintime
+					datetime_lt: $maxtime
+					requestSource_in: [$requestSource]
+				}
+			) {
+				sum {
+					edgeResponseBytes
+				}
+			}
+		}
+	}
+}
+`)
+
+	request.Var("accountID", accountID)
+	request.Var("mintime", from)
+	request.Var("maxtime", to)
+	request.Var("requestSource", requestSource)
+
+	gql.Mu.RLock()
+	defer gql.Mu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), cftimeout)
+	defer cancel()
+
+	var resp cloudflareResponseAccountHTTPDataTransfer
+	if err := gql.Client.Run(ctx, request, &resp); err != nil {
+		log.Errorf("failed to fetch account HTTP data transfer, err:%v", err)
 		return nil, err
 	}
 

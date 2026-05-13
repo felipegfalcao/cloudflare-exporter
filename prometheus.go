@@ -66,6 +66,10 @@ const (
 	zoneRequestASNMetricName                        MetricName = "cloudflare_zone_requests_asn"
 	zoneBandwidthASNMetricName                      MetricName = "cloudflare_zone_bandwidth_asn"
 	zoneEdgeErrorsByPathMetricName                  MetricName = "cloudflare_zone_edge_errors_by_path"
+	accountHTTPDataTransferMonthToDateMetricName    MetricName = "cloudflare_account_http_data_transfer_month_to_date_bytes"
+	accountHTTPDataTransferProjectedMonthMetricName MetricName = "cloudflare_account_http_data_transfer_projected_month_bytes"
+	accountHTTPDataTransferMonthElapsedMetricName   MetricName = "cloudflare_account_http_data_transfer_month_elapsed_seconds"
+	accountHTTPDataTransferMonthTotalMetricName     MetricName = "cloudflare_account_http_data_transfer_month_total_seconds"
 )
 
 type MetricsSet map[MetricName]struct{}
@@ -347,11 +351,31 @@ var (
 		Name: zoneBandwidthASNMetricName.String(),
 		Help: "Bandwidth per ASN (Autonomous System Number) in bytes",
 	}, []string{"zone", "account", "asn", "asn_description"})
-  
+
 	zoneEdgeErrorsByPath = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: zoneEdgeErrorsByPathMetricName.String(),
 		Help: "Number of edge errors (4xx and 5xx) by request path",
 	}, []string{"zone", "account", "status", "host", "path"})
+
+	accountHTTPDataTransferMonthToDate = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: accountHTTPDataTransferMonthToDateMetricName.String(),
+		Help: "Account-level HTTP data transfer for the current calendar month to date in bytes",
+	}, []string{"account"})
+
+	accountHTTPDataTransferProjectedMonth = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: accountHTTPDataTransferProjectedMonthMetricName.String(),
+		Help: "Projected account-level HTTP data transfer for the current calendar month in bytes",
+	}, []string{"account"})
+
+	accountHTTPDataTransferMonthElapsed = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: accountHTTPDataTransferMonthElapsedMetricName.String(),
+		Help: "Elapsed seconds in the current calendar month used for account-level HTTP data transfer projection",
+	}, []string{"account"})
+
+	accountHTTPDataTransferMonthTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: accountHTTPDataTransferMonthTotalMetricName.String(),
+		Help: "Total seconds in the current calendar month used for account-level HTTP data transfer projection",
+	}, []string{"account"})
 )
 
 func buildAllMetricsSet() MetricsSet {
@@ -401,6 +425,10 @@ func buildAllMetricsSet() MetricsSet {
 	allMetricsSet.Add(zoneRequestASNMetricName)
 	allMetricsSet.Add(zoneBandwidthASNMetricName)
 	allMetricsSet.Add(zoneEdgeErrorsByPathMetricName)
+	allMetricsSet.Add(accountHTTPDataTransferMonthToDateMetricName)
+	allMetricsSet.Add(accountHTTPDataTransferProjectedMonthMetricName)
+	allMetricsSet.Add(accountHTTPDataTransferMonthElapsedMetricName)
+	allMetricsSet.Add(accountHTTPDataTransferMonthTotalMetricName)
 	return allMetricsSet
 }
 
@@ -552,9 +580,21 @@ func mustRegisterMetrics(deniedMetrics MetricsSet) {
 	}
 	if !deniedMetrics.Has(zoneBandwidthASNMetricName) {
 		prometheus.MustRegister(zoneBandwidthASN)
-  }
+	}
 	if !deniedMetrics.Has(zoneEdgeErrorsByPathMetricName) {
 		prometheus.MustRegister(zoneEdgeErrorsByPath)
+	}
+	if !deniedMetrics.Has(accountHTTPDataTransferMonthToDateMetricName) {
+		prometheus.MustRegister(accountHTTPDataTransferMonthToDate)
+	}
+	if !deniedMetrics.Has(accountHTTPDataTransferProjectedMonthMetricName) {
+		prometheus.MustRegister(accountHTTPDataTransferProjectedMonth)
+	}
+	if !deniedMetrics.Has(accountHTTPDataTransferMonthElapsedMetricName) {
+		prometheus.MustRegister(accountHTTPDataTransferMonthElapsed)
+	}
+	if !deniedMetrics.Has(accountHTTPDataTransferMonthTotalMetricName) {
+		prometheus.MustRegister(accountHTTPDataTransferMonthTotal)
 	}
 }
 
@@ -1049,6 +1089,60 @@ func fetchZeroTrustAnalyticsForAccount(account cfaccounts.Account, wg *sync.Wait
 	defer wg.Done()
 
 	addCloudflareTunnelStatus(account)
+}
+
+func fetchAccountHTTPDataTransferAnalytics(account cfaccounts.Account, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	if !viper.GetBool("enable_account_usage_metrics") {
+		return
+	}
+
+	now, monthStart, nextMonthStart := GetMonthRange()
+	requestSource := viper.GetString("account_usage_request_source")
+
+	r, err := fetchAccountHTTPDataTransfer(account.ID, monthStart, now, requestSource)
+	if err != nil {
+		log.Error("failed to fetch account HTTP data transfer analytics for account ", account.ID, ": ", err)
+		return
+	}
+
+	elapsedSeconds := now.Sub(monthStart).Seconds()
+	totalSeconds := nextMonthStart.Sub(monthStart).Seconds()
+
+	addAccountHTTPDataTransfer(r, account, elapsedSeconds, totalSeconds)
+}
+
+func addAccountHTTPDataTransfer(r *cloudflareResponseAccountHTTPDataTransfer, account cfaccounts.Account, elapsedSeconds float64, totalSeconds float64) {
+	accountName := account.Name
+	if accountName == "" {
+		accountName = account.ID
+	} else {
+		accountName = strings.ToLower(strings.ReplaceAll(accountName, " ", "-"))
+	}
+
+	labels := prometheus.Labels{"account": accountName}
+
+	accountHTTPDataTransferMonthToDate.DeletePartialMatch(labels)
+	accountHTTPDataTransferProjectedMonth.DeletePartialMatch(labels)
+	accountHTTPDataTransferMonthElapsed.DeletePartialMatch(labels)
+	accountHTTPDataTransferMonthTotal.DeletePartialMatch(labels)
+
+	var monthToDateBytes uint64
+
+	if len(r.Viewer.Accounts) > 0 && len(r.Viewer.Accounts[0].HTTPRequestsAdaptiveGroups) > 0 {
+		monthToDateBytes = r.Viewer.Accounts[0].HTTPRequestsAdaptiveGroups[0].Sum.EdgeResponseBytes
+	}
+
+	projectedMonthBytes := 0.0
+	if elapsedSeconds > 0 {
+		projectedMonthBytes = float64(monthToDateBytes) / elapsedSeconds * totalSeconds
+	}
+
+	accountHTTPDataTransferMonthToDate.With(labels).Set(float64(monthToDateBytes))
+	accountHTTPDataTransferProjectedMonth.With(labels).Set(projectedMonthBytes)
+	accountHTTPDataTransferMonthElapsed.With(labels).Set(elapsedSeconds)
+	accountHTTPDataTransferMonthTotal.With(labels).Set(totalSeconds)
 }
 
 func addCloudflareTunnelStatus(account cfaccounts.Account) {
