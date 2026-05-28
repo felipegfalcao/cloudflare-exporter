@@ -18,6 +18,16 @@ func GetTimeRange() (now time.Time, now1mAgo time.Time) {
 	return now, now1mAgo
 }
 
+func GetMonthRange() (now time.Time, monthStart time.Time, nextMonthStart time.Time) {
+	now = time.Now().Add(-time.Duration(viper.GetInt("scrape_delay")) * time.Second).UTC()
+	now = now.Truncate(time.Minute)
+
+	monthStart = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	nextMonthStart = monthStart.AddDate(0, 1, 0)
+
+	return now, monthStart, nextMonthStart
+}
+
 func jsonStringToMap(fields string) (map[string]interface{}, error) {
 	var extraFields map[string]interface{}
 	err := json.Unmarshal([]byte(fields), &extraFields)

@@ -33,7 +33,7 @@ dashboard.
 Required authentication scopes:
 
 - `Zone/Analytics:Read` is required for zone-level metrics
-- `Account/Account Analytics:Read` is required for Worker metrics
+- `Account/Account Analytics:Read` is required for Worker metrics and account usage metrics
 - `Account/Account Settings:Read` is required for Worker metrics (for listing accessible accounts, scraping all available
   Workers included in authentication scope)
 - `Zone/Firewall Services:Read` is required to fetch zone rule name for `cloudflare_zone_firewall_events_count` metric
@@ -79,6 +79,8 @@ The exporter can be configured using env variables or command flags.
 | `METRICS_DENYLIST` | (Optional) cloudflare-exporter metrics to not export, comma delimited list of cloudflare-exporter metrics. If not set, all metrics are exported |
 | `ENABLE_PPROF` | (Optional) enable pprof profiling endpoints at `/debug/pprof/`. Accepts `true` or `false`, default `false`. **Warning**: Only enable in development/debugging environments |
 | `ENABLE_EDGE_ERRORS_BY_PATH` | (Optional) enable edge errors by path metric. Accepts `true` or `false`, default `false`. See [Edge Errors by Path Metric](#edge-errors-by-path-metric-opt-in) |
+| `ENABLE_ACCOUNT_USAGE_METRICS` | (Optional) enable account-level current calendar month HTTP data transfer metrics. Accepts `true` or `false`, default `false`. See [Account HTTP Data Transfer Usage Metrics](#account-http-data-transfer-usage-metrics-opt-in) |
+| `ACCOUNT_USAGE_REQUEST_SOURCE` | (Optional) Cloudflare `requestSource` value for account usage metrics, default `eyeball`. |
 | `ZONE_<NAME>` |  `DEPRECATED since 0.0.5` (optional) Zone ID. Add zones you want to scrape by adding env vars in this format. You can find the zone ids in Cloudflare dashboards. |
 | `LOG_LEVEL` | Set loglevel. Options are error, warn, info, debug. default `error` |
 
@@ -100,6 +102,8 @@ Corresponding flags:
   -metrics_denylist="": cloudflare-exporter metrics to not export, comma delimited list
   -enable_pprof=false: enable pprof profiling endpoints at /debug/pprof/
   -enable_edge_errors_by_path=false: enable edge errors by path metric (high cardinality, opt-in)
+  -enable_account_usage_metrics=false: enable account-level current calendar month HTTP data transfer metrics
+  -account_usage_request_source="eyeball": Cloudflare requestSource value for account usage metrics
   -log_level="error": log level(error,warn,info,debug)
 ```
 
@@ -134,6 +138,10 @@ Note: `ZONE_<name>` configuration is not supported as flag.
 # HELP cloudflare_zone_requests_browser_map_page_views_count Number of successful requests for HTML pages per zone
 # HELP cloudflare_zone_requests_total Number of requests for zone
 # HELP cloudflare_zone_edge_errors_by_path Number of edge errors (4xx and 5xx) by request path
+# HELP cloudflare_account_http_data_transfer_month_to_date_bytes Account-level HTTP data transfer for the current calendar month to date in bytes
+# HELP cloudflare_account_http_data_transfer_projected_month_bytes Projected account-level HTTP data transfer for the current calendar month in bytes
+# HELP cloudflare_account_http_data_transfer_month_elapsed_seconds Elapsed seconds in the current calendar month used for account-level HTTP data transfer projection
+# HELP cloudflare_account_http_data_transfer_month_total_seconds Total seconds in the current calendar month used for account-level HTTP data transfer projection
 # HELP cloudflare_zone_threats_country Threats per zone per country
 # HELP cloudflare_zone_threats_total Threats per zone
 # HELP cloudflare_zone_uniques_total Uniques per zone
@@ -153,6 +161,37 @@ The `cloudflare_zone_edge_errors_by_path` metric tracks edge errors (4xx/5xx) by
 **Disabled by default** due to high cardinality. Enable with `ENABLE_EDGE_ERRORS_BY_PATH=true`.
 
 Paths are normalized to reduce cardinality (e.g., `/users/123` → `/users/:id`, UUIDs → `:uuid`).
+
+### Account HTTP Data Transfer Usage Metrics (Opt-in)
+
+The account-level HTTP data transfer usage metrics expose current UTC calendar month usage and projected month usage.
+
+**Disabled by default** to avoid extra GraphQL API calls. Enable with:
+
+```bash
+ENABLE_ACCOUNT_USAGE_METRICS=true
+ACCOUNT_USAGE_REQUEST_SOURCE=eyeball
+```
+
+The exporter queries Cloudflare GraphQL Analytics API for the current UTC calendar month range:
+
+```text
+month_start -> now
+```
+
+Projected month usage is calculated as:
+
+```text
+projected_month = month_to_date / elapsed_month_seconds * total_month_seconds
+```
+
+This can be used for monthly quota, budget, or committed usage alerts.
+
+Example alert:
+
+```promql
+cloudflare_account_http_data_transfer_projected_month_bytes > 100 * 1024 * 1024 * 1024 * 1024
+```
 
 ## Helm chart repository
 
