@@ -1,4 +1,4 @@
-module github.com/lablabs/cloudflare-exporter
+module github.com/felipegfalcao/cloudflare-exporter
 
 go 1.25
 

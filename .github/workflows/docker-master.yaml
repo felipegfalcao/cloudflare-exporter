@@ -69,4 +69,4 @@ jobs:
             --src-creds "$GHCR_USERNAME:$GHCR_PASSWORD" \
             --dest-creds "$DOCKER_USERNAME:$DOCKER_TOKEN" \
             docker://${GHCR_REPO}:latest \
-            docker://lablabs/cloudflare_exporter:latest
+            docker://felipegfalcao/cloudflare_exporter:latest

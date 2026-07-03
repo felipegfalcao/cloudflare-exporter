@@ -1,6 +1,6 @@
 repositories:
   - name: "cloudflare-exporter"
-    url: "https://lablabs.github.io/cloudflare-exporter"
+    url: "https://felipegfalcao.github.io/cloudflare-exporter"
 
 releases:
   - name: "cloudflare-exporter"
